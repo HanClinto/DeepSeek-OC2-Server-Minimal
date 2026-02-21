@@ -191,7 +191,7 @@ def _infer(image_path: str, prompt: str) -> str:
             save_results=False,
             test_compress=False,
         )
-    return result
+    return result or ""
 
 
 def _merge_page_texts(pages: list[str]) -> str:
@@ -203,6 +203,9 @@ def _merge_page_texts(pages: list[str]) -> str:
       join them with a single space instead of a double newline.
     - Otherwise, separate pages with a blank line.
     """
+    # Coerce any None entries to empty strings
+    pages = [p if p is not None else "" for p in pages]
+
     if not pages:
         return ""
     if len(pages) == 1:
