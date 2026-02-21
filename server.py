@@ -1,8 +1,11 @@
 """DeepSeek-OCR2 web server powered by Unsloth."""
 
+import asyncio
+import json
 import os
 import re
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,6 +14,7 @@ os.environ["UNSLOTH_WARN_UNINITIALIZED"] = "0"
 import fitz  # PyMuPDF
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
+from sse_starlette.sse import EventSourceResponse
 from unsloth import FastVisionModel
 from transformers import AutoModel
 
@@ -60,6 +64,79 @@ async def ocr(
         return await _ocr_pdf(raw, prompt)
     else:
         return await _ocr_image(raw, suffix, prompt)
+
+
+@app.post("/ocr/stream")
+async def ocr_stream(
+    file: UploadFile = File(..., description="Image or PDF file to process"),
+    prompt: str = Form(
+        default="<image>\nFree OCR.",
+        description="OCR prompt (see / for examples)",
+    ),
+):
+    """SSE streaming endpoint – sends progress events while processing."""
+    suffix = Path(file.filename).suffix.lower() if file.filename else ".png"
+    filename = file.filename or "file"
+    raw = await file.read()
+
+    async def event_generator():
+        t0 = time.monotonic()
+
+        if suffix == ".pdf":
+            doc = fitz.open(stream=data_holder[0], filetype="pdf")
+            total = len(doc)
+            yield _sse("progress", {"step": "start", "filename": filename,
+                                     "total_pages": total, "message": f"Processing {total}-page PDF…"})
+
+            page_texts: list[str] = []
+            for i, page in enumerate(doc):
+                yield _sse("progress", {"step": "page_start", "page": i + 1,
+                                         "total_pages": total,
+                                         "message": f"OCR page {i + 1}/{total}…"})
+                pix = page.get_pixmap(dpi=144)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                    tmp.write(pix.tobytes("png"))
+                    tmp_path = tmp.name
+                try:
+                    text = await asyncio.to_thread(_infer, tmp_path, prompt_holder[0])
+                    page_texts.append(text)
+                finally:
+                    Path(tmp_path).unlink(missing_ok=True)
+                yield _sse("progress", {"step": "page_done", "page": i + 1,
+                                         "total_pages": total,
+                                         "message": f"Page {i + 1}/{total} complete."})
+            doc.close()
+
+            merged = _merge_page_texts(page_texts)
+            elapsed = round(time.monotonic() - t0, 1)
+            yield _sse("result", {"result": merged, "pages": total,
+                                   "page_results": page_texts,
+                                   "elapsed_seconds": elapsed})
+        else:
+            yield _sse("progress", {"step": "start", "filename": filename,
+                                     "total_pages": 1, "message": "Processing image…"})
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix_holder[0]) as tmp:
+                tmp.write(data_holder[0])
+                tmp_path = tmp.name
+            try:
+                text = await asyncio.to_thread(_infer, tmp_path, prompt_holder[0])
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+            elapsed = round(time.monotonic() - t0, 1)
+            yield _sse("result", {"result": text, "elapsed_seconds": elapsed})
+
+    # Closures can't capture mutable locals across async generators easily,
+    # so stash values in lists.
+    data_holder = [raw]
+    prompt_holder = [prompt]
+    suffix_holder = [suffix]
+
+    return EventSourceResponse(event_generator())
+
+
+def _sse(event: str, data: dict) -> dict:
+    """Format a dict as an SSE event for sse-starlette."""
+    return {"event": event, "data": json.dumps(data)}
 
 
 async def _ocr_image(data: bytes, suffix: str, prompt: str) -> JSONResponse:
@@ -175,6 +252,28 @@ _HTML = """<!DOCTYPE html>
   #drop-zone.drag-over { background: #e8f4ff; border-color: #007bff; }
   #drop-zone p { margin: 0; color: #555; }
   #result { background: #f4f4f4; padding: 16px; border-radius: 8px; margin-top: 16px; white-space: pre-wrap; display: none; }
+  #progress-wrap {
+    margin-top: 14px; display: none;
+  }
+  #progress-bar-outer {
+    background: #e0e0e0; border-radius: 8px; height: 22px; overflow: hidden; position: relative;
+  }
+  #progress-bar-inner {
+    background: linear-gradient(90deg, #007bff 0%, #00b4d8 100%);
+    height: 100%; width: 0%; border-radius: 8px;
+    transition: width 0.4s ease;
+  }
+  #progress-bar-inner.indeterminate {
+    width: 100%;
+    background: linear-gradient(90deg, #007bff 0%, #00b4d8 50%, #007bff 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  #progress-text {
+    font-size: 0.85em; color: #555; margin-top: 4px;
+  }
+  #elapsed { font-size: 0.8em; color: #888; margin-left: 8px; }
   select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; font-size: 0.95em; }
   select { width: 100%; margin-bottom: 12px; }
   button { background: #007bff; color: #fff; border-color: #007bff; cursor: pointer; margin-top: 8px; }
@@ -200,6 +299,10 @@ _HTML = """<!DOCTYPE html>
 </div>
 <input type="file" id="file-input" style="display:none" accept="image/*,.pdf,application/pdf">
 <div id="status"></div>
+<div id="progress-wrap">
+  <div id="progress-bar-outer"><div id="progress-bar-inner"></div></div>
+  <div id="progress-text"></div>
+</div>
 <pre id="result"></pre>
 
 <script>
@@ -208,6 +311,9 @@ const input = document.getElementById('file-input');
 const result = document.getElementById('result');
 const status = document.getElementById('status');
 const promptSelect = document.getElementById('prompt-select');
+const progressWrap = document.getElementById('progress-wrap');
+const progressBar = document.getElementById('progress-bar-inner');
+const progressText = document.getElementById('progress-text');
 
 zone.addEventListener('click', () => input.click());
 zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
@@ -215,23 +321,105 @@ zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
 zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
 input.addEventListener('change', () => { handleFile(input.files[0]); input.value = ''; });
 
+function resetProgress() {
+  progressWrap.style.display = 'none';
+  progressBar.style.width = '0%';
+  progressBar.classList.remove('indeterminate');
+  progressText.textContent = '';
+}
+
+let startTime = 0;
+let elapsedInterval = null;
+
+function startTimer() {
+  startTime = Date.now();
+  if (elapsedInterval) clearInterval(elapsedInterval);
+  elapsedInterval = setInterval(() => {
+    const s = ((Date.now() - startTime) / 1000).toFixed(0);
+    const el = document.getElementById('elapsed');
+    if (el) el.textContent = s + 's elapsed';
+  }, 500);
+}
+
+function stopTimer() {
+  if (elapsedInterval) { clearInterval(elapsedInterval); elapsedInterval = null; }
+}
+
 async function handleFile(file) {
   if (!file) return;
-  status.textContent = '⏳ Processing ' + file.name + '…';
+  resetProgress();
   result.style.display = 'none';
+  status.innerHTML = '⏳ Uploading <strong>' + file.name + '</strong>… <span id="elapsed"></span>';
+  progressWrap.style.display = 'block';
+  progressBar.classList.add('indeterminate');
+  progressText.textContent = 'Uploading…';
+  startTimer();
 
   const form = new FormData();
   form.append('file', file);
   form.append('prompt', promptSelect.value);
 
   try {
-    const res = await fetch('/ocr', { method: 'POST', body: form });
-    const data = await res.json();
+    const res = await fetch('/ocr/stream', { method: 'POST', body: form });
+    if (!res.ok) throw new Error('Server returned ' + res.status);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\\n');
+      buffer = lines.pop();  // keep incomplete line in buffer
+
+      let currentEvent = null;
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7).trim();
+        } else if (line.startsWith('data: ') && currentEvent) {
+          const data = JSON.parse(line.slice(6));
+          handleSSE(currentEvent, data);
+          currentEvent = null;
+        }
+      }
+    }
+  } catch (err) {
+    stopTimer();
+    status.textContent = '❌ Error: ' + err.message;
+    resetProgress();
+  }
+}
+
+function handleSSE(event, data) {
+  if (event === 'progress') {
+    progressBar.classList.remove('indeterminate');
+    status.innerHTML = '⏳ <strong>' + data.message + '</strong> <span id="elapsed"></span>';
+    progressText.textContent = data.message;
+
+    if (data.total_pages && data.total_pages > 1) {
+      if (data.step === 'page_done') {
+        const pct = Math.round((data.page / data.total_pages) * 100);
+        progressBar.style.width = pct + '%';
+      } else if (data.step === 'page_start') {
+        const pct = Math.round(((data.page - 1) / data.total_pages) * 100);
+        progressBar.style.width = pct + '%';
+      } else if (data.step === 'start') {
+        progressBar.style.width = '0%';
+      }
+    } else {
+      progressBar.classList.add('indeterminate');
+    }
+  } else if (event === 'result') {
+    stopTimer();
+    const elapsed = data.elapsed_seconds ? ' (' + data.elapsed_seconds + 's)' : '';
+    progressBar.classList.remove('indeterminate');
+    progressBar.style.width = '100%';
+    status.textContent = '✅ Done' + elapsed;
+    progressText.textContent = 'Complete' + elapsed;
     result.textContent = JSON.stringify(data, null, 2);
     result.style.display = 'block';
-    status.textContent = '✅ Done.';
-  } catch (err) {
-    status.textContent = '❌ Error: ' + err.message;
   }
 }
 </script>
@@ -242,6 +430,7 @@ async function handleFile(file) {
   <tr><td><code>GET</code></td><td><code>/</code></td><td>This page</td></tr>
   <tr><td><code>GET</code></td><td><code>/health</code></td><td>Health check – returns model status as JSON</td></tr>
   <tr><td><code>POST</code></td><td><code>/ocr</code></td><td>Run OCR on an uploaded image or PDF; returns <code>{"result": "..."}</code></td></tr>
+  <tr><td><code>POST</code></td><td><code>/ocr/stream</code></td><td>Same as /ocr but streams progress via Server-Sent Events</td></tr>
   <tr><td><code>GET</code></td><td><code>/docs</code></td><td>Interactive Swagger UI (auto-generated)</td></tr>
 </table>
 
