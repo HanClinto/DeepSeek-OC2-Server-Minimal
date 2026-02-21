@@ -104,6 +104,7 @@ async def ocr_stream(
                     Path(tmp_path).unlink(missing_ok=True)
                 yield _sse("progress", {"step": "page_done", "page": i + 1,
                                          "total_pages": total,
+                                         "page_text": text or "",
                                          "message": f"Page {i + 1}/{total} complete."})
             doc.close()
 
@@ -123,7 +124,7 @@ async def ocr_stream(
             finally:
                 Path(tmp_path).unlink(missing_ok=True)
             elapsed = round(time.monotonic() - t0, 1)
-            yield _sse("result", {"result": text, "elapsed_seconds": elapsed})
+            yield _sse("result", {"result": text or "", "elapsed_seconds": elapsed})
 
     # Closures can't capture mutable locals across async generators easily,
     # so stash values in lists.
@@ -190,6 +191,7 @@ def _infer(image_path: str, prompt: str) -> str:
             crop_mode=True,
             save_results=False,
             test_compress=False,
+            eval_mode=True,
         )
     return result or ""
 
@@ -239,22 +241,79 @@ _HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DeepSeek-OCR2 Server</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 20px; color: #222; }
-  h1 { color: #1a1a2e; }
-  h2 { color: #16213e; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-top: 32px; }
-  code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
-  pre { background: #f4f4f4; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.9em; }
+  :root {
+    --bg: #ffffff; --fg: #222; --fg-muted: #555; --fg-faint: #888;
+    --surface: #f4f4f4; --surface2: #f9f9f9; --surface3: #f0f0f0;
+    --border: #ddd; --border2: #eee; --border3: #e0e0e0; --border-table: #ccc;
+    --accent: #007bff; --accent-hover: #0056b3;
+    --h1: #1a1a2e; --h2: #16213e;
+    --drop-hover-bg: #e8f4ff;
+    --link: #007bff;
+  }
+  [data-theme="dark"] {
+    --bg: #1a1a2e; --fg: #e0e0e0; --fg-muted: #aaa; --fg-faint: #777;
+    --surface: #2a2a3e; --surface2: #242438; --surface3: #2e2e44;
+    --border: #444; --border2: #3a3a50; --border3: #444; --border-table: #555;
+    --accent: #4dabf7; --accent-hover: #74c0fc;
+    --h1: #c5cae9; --h2: #9fa8da;
+    --drop-hover-bg: #2a3a5e;
+    --link: #74c0fc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1a1a2e; --fg: #e0e0e0; --fg-muted: #aaa; --fg-faint: #777;
+      --surface: #2a2a3e; --surface2: #242438; --surface3: #2e2e44;
+      --border: #444; --border2: #3a3a50; --border3: #444; --border-table: #555;
+      --accent: #4dabf7; --accent-hover: #74c0fc;
+      --h1: #c5cae9; --h2: #9fa8da;
+      --drop-hover-bg: #2a3a5e;
+      --link: #74c0fc;
+    }
+  }
+  body { font-family: system-ui, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 20px; color: var(--fg); background: var(--bg); transition: background 0.3s, color 0.3s; }
+  a { color: var(--link); }
+  h1 { color: var(--h1); }
+  h2 { color: var(--h2); border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-top: 32px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
+  pre { background: var(--surface); padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.9em; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; }
-  th { background: #f4f4f4; font-size: 0.9em; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border2); }
+  th { background: var(--surface); font-size: 0.9em; }
+  .header-row { display: flex; align-items: center; justify-content: space-between; }
+  #theme-toggle {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 12px; cursor: pointer; font-size: 1.1em; line-height: 1;
+    color: var(--fg); transition: background 0.2s;
+  }
+  #theme-toggle:hover { background: var(--surface3); }
   #drop-zone {
-    border: 2px dashed #aaa; border-radius: 8px; padding: 40px 20px;
+    border: 2px dashed var(--border); border-radius: 8px; padding: 40px 20px;
     text-align: center; cursor: pointer; transition: background 0.2s, border-color 0.2s;
     user-select: none;
   }
-  #drop-zone.drag-over { background: #e8f4ff; border-color: #007bff; }
-  #drop-zone p { margin: 0; color: #555; }
-  #result { background: #f4f4f4; padding: 16px; border-radius: 8px; margin-top: 16px; white-space: pre-wrap; display: none; }
+  #drop-zone.drag-over { background: var(--drop-hover-bg); border-color: var(--accent); }
+  #drop-zone p { margin: 0; color: var(--fg-muted); }
+  #result { background: var(--surface); padding: 16px; border-radius: 8px; margin-top: 16px; white-space: pre-wrap; display: none; }
+  #output-panel { display: none; margin-top: 16px; }
+  .tab-bar { display: flex; gap: 0; border-bottom: 2px solid var(--border); }
+  .tab-btn {
+    padding: 8px 18px; cursor: pointer; border: none; background: transparent;
+    font-size: 0.95em; color: var(--fg-muted); border-bottom: 2px solid transparent;
+    margin-bottom: -2px; transition: all 0.2s;
+  }
+  .tab-btn:hover { color: var(--accent); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab-content { display: none; padding: 16px; background: var(--surface2); border: 1px solid var(--border3); border-top: none; border-radius: 0 0 8px 8px; min-height: 120px; max-height: 600px; overflow: auto; }
+  .tab-content.active { display: block; }
+  #raw-tab { white-space: pre-wrap; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.88em; }
+  #rendered-tab { font-size: 0.95em; line-height: 1.6; }
+  #rendered-tab h1, #rendered-tab h2, #rendered-tab h3 { margin-top: 0.8em; }
+  #rendered-tab table { border-collapse: collapse; margin: 0.5em 0; }
+  #rendered-tab th, #rendered-tab td { border: 1px solid var(--border-table); padding: 4px 8px; }
+  #rendered-tab pre { background: var(--surface3); padding: 10px; border-radius: 4px; overflow-x: auto; }
+  #rendered-tab code { background: var(--surface3); padding: 1px 4px; border-radius: 3px; font-size: 0.9em; }
+  #rendered-tab img { max-width: 100%; }
+  #json-tab { white-space: pre-wrap; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.85em; color: var(--fg-muted); }
   #progress-wrap {
     margin-top: 14px; display: none;
   }
@@ -274,19 +333,47 @@ _HTML = """<!DOCTYPE html>
   }
   @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
   #progress-text {
-    font-size: 0.85em; color: #555; margin-top: 4px;
+    font-size: 0.85em; color: var(--fg-muted); margin-top: 4px;
   }
-  #elapsed { font-size: 0.8em; color: #888; margin-left: 8px; }
-  select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; font-size: 0.95em; }
+  #elapsed { font-size: 0.8em; color: var(--fg-faint); margin-left: 8px; }
+  select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.95em; background: var(--surface); color: var(--fg); }
   select { width: 100%; margin-bottom: 12px; }
-  button { background: #007bff; color: #fff; border-color: #007bff; cursor: pointer; margin-top: 8px; }
-  button:hover { background: #0056b3; }
-  #status { margin-top: 10px; color: #555; min-height: 1.4em; }
+  button:not(#theme-toggle) { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; margin-top: 8px; }
+  button:not(#theme-toggle):hover { background: var(--accent-hover); }
+  #status { margin-top: 10px; color: var(--fg-muted); min-height: 1.4em; }
 </style>
 </head>
 <body>
-<h1>🔍 DeepSeek-OCR2 Server</h1>
+<div class="header-row">
+  <h1>🔍 DeepSeek-OCR2 Server</h1>
+  <button id="theme-toggle" title="Toggle dark/light mode">🌙</button>
+</div>
 <p>A minimalistic API server for <a href="https://huggingface.co/unsloth/DeepSeek-OCR-2" target="_blank">Unsloth's DeepSeek-OCR-2</a> model.</p>
+<script>
+(function() {
+  const toggle = document.getElementById('theme-toggle');
+  const root = document.documentElement;
+  const stored = localStorage.getItem('theme');
+  if (stored) {
+    root.setAttribute('data-theme', stored);
+  }
+  function updateIcon() {
+    const isDark = root.getAttribute('data-theme') === 'dark' ||
+      (!root.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    toggle.textContent = isDark ? '☀️' : '🌙';
+  }
+  updateIcon();
+  toggle.addEventListener('click', () => {
+    const isDark = root.getAttribute('data-theme') === 'dark' ||
+      (!root.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const next = isDark ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    updateIcon();
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateIcon);
+})();
+</script>
 
 <h2>Try It</h2>
 <label for="prompt-select"><strong>Prompt:</strong></label>
@@ -306,17 +393,51 @@ _HTML = """<!DOCTYPE html>
   <div id="progress-bar-outer"><div id="progress-bar-inner"></div></div>
   <div id="progress-text"></div>
 </div>
-<pre id="result"></pre>
+<pre id="result" style="display:none;"></pre>
+<div id="output-panel">
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="rendered-tab">Rendered</button>
+    <button class="tab-btn" data-tab="raw-tab">Raw Markdown</button>
+    <button class="tab-btn" data-tab="json-tab">JSON</button>
+  </div>
+  <div id="rendered-tab" class="tab-content active"></div>
+  <div id="raw-tab" class="tab-content"></div>
+  <div id="json-tab" class="tab-content"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
 <script>
 const zone = document.getElementById('drop-zone');
 const input = document.getElementById('file-input');
-const result = document.getElementById('result');
 const status = document.getElementById('status');
 const promptSelect = document.getElementById('prompt-select');
 const progressWrap = document.getElementById('progress-wrap');
 const progressBar = document.getElementById('progress-bar-inner');
 const progressText = document.getElementById('progress-text');
+const outputPanel = document.getElementById('output-panel');
+const rawTab = document.getElementById('raw-tab');
+const renderedTab = document.getElementById('rendered-tab');
+const jsonTab = document.getElementById('json-tab');
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+
+let accumulatedText = '';
+
+function updateOutputPanels(text) {
+  accumulatedText = text;
+  rawTab.textContent = text;
+  try { renderedTab.innerHTML = marked.parse(text); } catch(e) { renderedTab.textContent = text; }
+  outputPanel.style.display = 'block';
+}
 
 zone.addEventListener('click', () => input.click());
 zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
@@ -351,7 +472,11 @@ function stopTimer() {
 async function handleFile(file) {
   if (!file) return;
   resetProgress();
-  result.style.display = 'none';
+  accumulatedText = '';
+  rawTab.textContent = '';
+  renderedTab.innerHTML = '';
+  jsonTab.textContent = '';
+  outputPanel.style.display = 'none';
   status.innerHTML = '⏳ Uploading <strong>' + file.name + '</strong>… <span id="elapsed"></span>';
   progressWrap.style.display = 'block';
   progressBar.classList.add('indeterminate');
@@ -375,7 +500,7 @@ async function handleFile(file) {
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\\n');
-      buffer = lines.pop();  // keep incomplete line in buffer
+      buffer = lines.pop();
 
       let currentEvent = null;
       for (const line of lines) {
@@ -401,6 +526,13 @@ function handleSSE(event, data) {
     status.innerHTML = '⏳ <strong>' + data.message + '</strong> <span id="elapsed"></span>';
     progressText.textContent = data.message;
 
+    // Stream page text as each page completes
+    if (data.step === 'page_done' && data.page_text) {
+      if (accumulatedText) accumulatedText += '\\n\\n';
+      accumulatedText += data.page_text;
+      updateOutputPanels(accumulatedText);
+    }
+
     if (data.total_pages && data.total_pages > 1) {
       if (data.step === 'page_done') {
         const pct = Math.round((data.page / data.total_pages) * 100);
@@ -421,8 +553,10 @@ function handleSSE(event, data) {
     progressBar.style.width = '100%';
     status.textContent = '✅ Done' + elapsed;
     progressText.textContent = 'Complete' + elapsed;
-    result.textContent = JSON.stringify(data, null, 2);
-    result.style.display = 'block';
+
+    // Final update with merged/complete text
+    updateOutputPanels(data.result || accumulatedText);
+    jsonTab.textContent = JSON.stringify(data, null, 2);
   }
 }
 </script>
