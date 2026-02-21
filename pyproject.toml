@@ -8,4 +8,17 @@ dependencies = [
     "uvicorn[standard]>=0.20.0",
     "python-multipart>=0.0.6",
     "huggingface-hub>=0.20.0",
+    "transformers>=4.38.0",
+    "torch>=2.5.0",
+    "torchvision",
+    "bitsandbytes",
+    "addict",
+    "matplotlib",
+    "pymupdf>=1.24.0",
+    "unsloth",
+    "unsloth_zoo",
 ]
+
+[tool.uv.sources]
+unsloth = { git = "https://github.com/unslothai/unsloth.git" }
+unsloth_zoo = { git = "https://github.com/unslothai/unsloth-zoo.git" }

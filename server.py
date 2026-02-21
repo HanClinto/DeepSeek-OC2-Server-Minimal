@@ -9,8 +9,8 @@ os.environ["UNSLOTH_WARN_UNINITIALIZED"] = "0"
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
-from transformers import AutoModel
 from unsloth import FastVisionModel
+from transformers import AutoModel
 
 MODEL_DIR = os.environ.get("MODEL_DIR", "./deepseek_ocr")
 
