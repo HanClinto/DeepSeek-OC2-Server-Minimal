@@ -186,37 +186,6 @@ _HTML = """<!DOCTYPE html>
 <h1>🔍 DeepSeek-OCR2 Server</h1>
 <p>A minimalistic API server for <a href="https://huggingface.co/unsloth/DeepSeek-OCR-2" target="_blank">Unsloth's DeepSeek-OCR-2</a> model.</p>
 
-<h2>Endpoints</h2>
-<table>
-  <tr><th>Method</th><th>Path</th><th>Description</th></tr>
-  <tr><td><code>GET</code></td><td><code>/</code></td><td>This page</td></tr>
-  <tr><td><code>GET</code></td><td><code>/health</code></td><td>Health check – returns model status as JSON</td></tr>
-  <tr><td><code>POST</code></td><td><code>/ocr</code></td><td>Run OCR on an uploaded image or PDF; returns <code>{"result": "..."}</code></td></tr>
-  <tr><td><code>GET</code></td><td><code>/docs</code></td><td>Interactive Swagger UI (auto-generated)</td></tr>
-</table>
-
-<h2>POST /ocr – Form Fields</h2>
-<table>
-  <tr><th>Field</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr>
-  <tr><td><code>file</code></td><td>file</td><td>✅</td><td>–</td><td>Image or PDF to process (PNG, JPG, TIFF, PDF, …). Multi-page PDFs are split per-page and merged.</td></tr>
-  <tr><td><code>prompt</code></td><td>string</td><td>No</td><td><code>&lt;image&gt;\\nFree OCR.</code></td><td>OCR instruction (see examples below)</td></tr>
-</table>
-
-<h2>Example curl</h2>
-<pre>curl -X POST http://localhost:8000/ocr \\
-  -F "file=@image.png" \\
-  -F "prompt=&lt;image&gt;\\nFree OCR."</pre>
-
-<h2>Prompt Examples</h2>
-<table>
-  <tr><th>Prompt</th><th>Use case</th></tr>
-  <tr><td><code>&lt;image&gt;\\nFree OCR.</code></td><td>Plain text extraction</td></tr>
-  <tr><td><code>&lt;image&gt;\\n&lt;|grounding|&gt;Convert the document to markdown.</code></td><td>Document → Markdown</td></tr>
-  <tr><td><code>&lt;image&gt;\\nOCR this image.</code></td><td>General OCR</td></tr>
-  <tr><td><code>&lt;image&gt;\\nParse the figure.</code></td><td>Figure / chart parsing</td></tr>
-  <tr><td><code>&lt;image&gt;\\nDescribe this image in detail.</code></td><td>Image description</td></tr>
-</table>
-
 <h2>Try It</h2>
 <label for="prompt-select"><strong>Prompt:</strong></label>
 <select id="prompt-select">
@@ -266,6 +235,38 @@ async function handleFile(file) {
   }
 }
 </script>
+
+<h2>Endpoints</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+  <tr><td><code>GET</code></td><td><code>/</code></td><td>This page</td></tr>
+  <tr><td><code>GET</code></td><td><code>/health</code></td><td>Health check – returns model status as JSON</td></tr>
+  <tr><td><code>POST</code></td><td><code>/ocr</code></td><td>Run OCR on an uploaded image or PDF; returns <code>{"result": "..."}</code></td></tr>
+  <tr><td><code>GET</code></td><td><code>/docs</code></td><td>Interactive Swagger UI (auto-generated)</td></tr>
+</table>
+
+<h2>POST /ocr – Form Fields</h2>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>file</code></td><td>file</td><td>✅</td><td>–</td><td>Image or PDF to process (PNG, JPG, TIFF, PDF, …). Multi-page PDFs are split per-page and merged.</td></tr>
+  <tr><td><code>prompt</code></td><td>string</td><td>No</td><td><code>&lt;image&gt;\\nFree OCR.</code></td><td>OCR instruction (see examples below)</td></tr>
+</table>
+
+<h2>Example curl</h2>
+<pre>curl -X POST http://localhost:8000/ocr \\
+  -F "file=@image.png" \\
+  -F "prompt=&lt;image&gt;\\nFree OCR."</pre>
+
+<h2>Prompt Examples</h2>
+<table>
+  <tr><th>Prompt</th><th>Use case</th></tr>
+  <tr><td><code>&lt;image&gt;\\nFree OCR.</code></td><td>Plain text extraction</td></tr>
+  <tr><td><code>&lt;image&gt;\\n&lt;|grounding|&gt;Convert the document to markdown.</code></td><td>Document → Markdown</td></tr>
+  <tr><td><code>&lt;image&gt;\\nOCR this image.</code></td><td>General OCR</td></tr>
+  <tr><td><code>&lt;image&gt;\\nParse the figure.</code></td><td>Figure / chart parsing</td></tr>
+  <tr><td><code>&lt;image&gt;\\nDescribe this image in detail.</code></td><td>Image description</td></tr>
+</table>
+
 </body>
 </html>"""
 
