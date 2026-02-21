@@ -35,9 +35,18 @@ fi
 echo "Detected CUDA version tag: cu${CUDA_VER}"
 echo "Installing Unsloth (cu${CUDA_VER}-torch${TORCH_VER})..."
 
-# Try the specific CUDA+Torch combo; fall back to a generic install on failure.
-uv add "unsloth[cu${CUDA_VER}-torch${TORCH_VER}] @ git+https://github.com/unslothai/unsloth.git" \
-    || uv add "unsloth @ git+https://github.com/unslothai/unsloth.git"
+UNSLOTH_GIT="git+https://github.com/unslothai/unsloth.git"
+UNSLOTH_PYPROJECT_URL="https://raw.githubusercontent.com/unslothai/unsloth/HEAD/pyproject.toml"
+EXTRA="cu${CUDA_VER}-torch${TORCH_VER}"
+
+# Only request a CUDA/Torch extra when that extra exists in Unsloth's pyproject.
+# This avoids uv warnings for combinations that are no longer published.
+if curl -fsSL "$UNSLOTH_PYPROJECT_URL" | rg -q "^${EXTRA}\\s*=\\s*\\["; then
+    uv add "unsloth[${EXTRA}] @ ${UNSLOTH_GIT}"
+else
+    echo "No published Unsloth extra named '${EXTRA}'. Falling back to generic install."
+    uv add "unsloth @ ${UNSLOTH_GIT}"
+fi
 
 # ── 4. Download the model ─────────────────────────────────────────────────────
 echo "Downloading unsloth/DeepSeek-OCR-2 model (this may take a while)..."
