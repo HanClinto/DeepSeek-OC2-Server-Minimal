@@ -1,0 +1,11 @@
+[project]
+name = "deepseek-oc2-server-minimal"
+version = "0.1.0"
+description = "Minimalistic web server for DeepSeek-OCR2 via Unsloth"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "python-multipart>=0.0.6",
+    "huggingface-hub>=0.20.0",
+]
